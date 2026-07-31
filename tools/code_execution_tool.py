@@ -1340,7 +1340,18 @@ def execute_code(
         # OS-essential allowlist (SYSTEMROOT, WINDIR, COMSPEC, ...) is also
         # passed through — without those, the child can't create a socket
         # or spawn a subprocess.  See ``_scrub_child_env`` for the rules.
-        child_env = _scrub_child_env(os.environ)
+        
+        # 复制当前进程的所有环境变量作为基础
+        source_env = dict(os.environ)
+        # 从tools.environments.local模块导入函数
+        # 该函数用于向环境变量中注入会话上下文信息
+        # （例如会话ID、临时目录路径等）
+        from tools.environments.local import _inject_session_context_env
+        # 将会话上下文环境变量注入到子进程的环境字典中
+        _inject_session_context_env(source_env)
+        # 对环境变量进行清洗过滤
+        child_env = _scrub_child_env(source_env)
+        
         child_env["HERMES_RPC_SOCKET"] = rpc_endpoint
         child_env["HERMES_RPC_TOKEN"] = rpc_token
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"

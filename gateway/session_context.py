@@ -37,7 +37,13 @@ needs to replace the import + call site:
 """
 
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Dict
+import logging
+from hermes_logging import setup_logging
+import json
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Sentinel to distinguish "never set in this context" from "explicitly set to empty".
 # When a contextvar holds _UNSET, we fall back to os.environ (CLI/cron compat).
@@ -92,6 +98,7 @@ _SESSION_UI_SESSION_ID: ContextVar = ContextVar("HERMES_UI_SESSION_ID", default=
 _SESSION_MESSAGE_ID: ContextVar = ContextVar("HERMES_SESSION_MESSAGE_ID", default=_UNSET)
 
 _SESSION_PROFILE: ContextVar = ContextVar("HERMES_SESSION_PROFILE", default=_UNSET)
+_CUSTOM_VARIABLES: ContextVar = ContextVar("HERMES_CUSTOM_VARIABLES", default=_UNSET)
 
 # Whether the current session's delivery channel can route an ASYNC completion
 # back to the agent AFTER the current turn ends (i.e. wake a fresh turn).
@@ -136,6 +143,7 @@ _VAR_MAP = {
     "HERMES_CRON_AUTO_DELIVER_PLATFORM": _CRON_AUTO_DELIVER_PLATFORM,
     "HERMES_CRON_AUTO_DELIVER_CHAT_ID": _CRON_AUTO_DELIVER_CHAT_ID,
     "HERMES_CRON_AUTO_DELIVER_THREAD_ID": _CRON_AUTO_DELIVER_THREAD_ID,
+    "HERMES_CUSTOM_VARIABLES":_CUSTOM_VARIABLES,
 }
 
 
@@ -154,6 +162,23 @@ def set_current_session_id(session_id: str) -> None:
     _SESSION_ID.set(session_id)
 
 
+def set_custom_variables(variables: Dict) -> None:
+    """Synchronize ``HERMES_SESSION_ID`` across ContextVar and ``os.environ``.
+
+    Long-lived single-process entrypoints like the CLI can rotate sessions via
+    ``/new``, ``/resume``, ``/branch``, or compression splits without
+    reconstructing the entire agent. Tools still consult
+    ``get_session_env("HERMES_SESSION_ID")`` with an ``os.environ`` fallback,
+    so both storage paths must move together when the active session changes.
+    """
+    import os
+    logger.info("set_custom_variables: %s",variables)
+
+    variables_str = json.dumps(variables)
+    os.environ["HERMES_CUSTOM_VARIABLES"] = variables_str
+    _CUSTOM_VARIABLES.set(variables_str)
+
+
 def set_session_vars(
     platform: str = "",
     source: str = "",
@@ -169,6 +194,7 @@ def set_session_vars(
     cwd: str = "",
     async_delivery: bool = True,
     ui_session_id: str = "",
+    custom_variables: Dict = {},
 ) -> list:
     """Set all session context variables and return reset tokens.
 
@@ -204,6 +230,7 @@ def set_session_vars(
         _SESSION_MESSAGE_ID.set(message_id),
         _SESSION_PROFILE.set(profile),
         _SESSION_ASYNC_DELIVERY.set(bool(async_delivery)),
+        _CUSTOM_VARIABLES.set(custom_variables),
     ]
     try:
         from agent.runtime_cwd import set_session_cwd
